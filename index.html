@@ -82,7 +82,7 @@ input,select,textarea{width:100%;font:inherit;font-size:16px;border:2px solid #e
 </header>
 <main id="main"></main>
 <footer>
-<button class="link" data-act="soon">Ce mois-ci</button><button class="link" data-act="export">Sauvegarder</button>
+<button class="link" data-act="soon">Ce mois-ci</button><button class="link" data-act="notif">Activer les rappels</button><button class="link" data-act="export">Sauvegarder</button>
 <button class="link" data-act="import">Restaurer</button><input id="imp" type="file" accept="application/json" hidden>
 </footer>
 <button class="fab" data-act="new" aria-label="Ajouter">+</button>
@@ -158,7 +158,7 @@ function shrink(f){return new Promise(r=>{const i=new Image(),u=URL.createObject
 function saveForm(){
   const name=$('#f-name').value.trim(),m=+$('#f-m').value,d=+$('#f-d').value;
   if(!name){$('#f-name').focus();return}
-  if(!(d>=1&&d<=new Date(2024,m+1,0).getDate())){alert('Ce jour n\'existe pas en '+MOIS[m]+'.');return}
+  if(!(d>=1&&d<=new Date(2000,m+1,0).getDate())){alert('Ce jour n\'existe pas en '+MOIS[m]+'.');return}
   const e={id:sel||uid(),name,type:$('#f-type').value,m,d,y:+$('#f-y').value||'',photo:ph,tel:$('#f-tel').value.trim(),gift:$('#f-gift').value.trim(),note:$('#f-note').value.trim()};
   S=sel?S.map(x=>x.id==sel?e:x):[...S,e];save();render();detail(e.id);
 }
@@ -168,14 +168,34 @@ function soon(){
   ${L.length?L.map(e=>`<button class="row" data-id="${e.id}"><i>${e.d}</i><b>${e.photo?`<img src="${e.photo}" alt="">`:''}<span>${esc(e.name)}</span><small>${TYPES[e.type][1]}</small></b></button>`).join(''):`<p class="empty-msg">Rien de prévu ce mois-ci. Ajoute une date avec le bouton +.</p>`}
   <div class="act">${canAsk?'<button class="btn ghost" data-act="notif">Me prévenir à l\'ouverture</button>':''}<button class="btn" data-act="close">Fermer</button></div></div>`);
 }
-function monthlyCheck(){
-  const k=`${now.getFullYear()}-${now.getMonth()}`;
-  if(localStorage.getItem('annif.seen')==k)return;
-  try{localStorage.setItem('annif.seen',k)}catch(e){}
-  soon();
-  const L=S.filter(e=>e.m==now.getMonth()).sort((a,b)=>a.d-b.d);
-  if(L.length&&'Notification' in window&&Notification.permission=='granted')
-    navigator.serviceWorker?.ready.then(r=>r.showNotification('Ce mois-ci : '+MOIS[now.getMonth()],{body:L.map(e=>`${e.d} ${e.name}`).join('\n'),icon:'icon-192.png'}));
+function requestReminders(){
+  if(!('Notification' in window)){alert('Les notifications ne sont pas prises en charge par ce navigateur.');return}
+  if(Notification.permission=='denied'){alert('Les notifications sont bloquées. Autorise-les dans les réglages du navigateur, puis réessaie.');return}
+  Notification.requestPermission().then(p=>{
+    if(p=='granted'){checkReminders();alert('Rappels activés : à l’ouverture de l’application, une notification sera envoyée le jour même et la veille.')}
+    else if(p=='denied')alert('Autorisation refusée. Tu peux la modifier dans les réglages du navigateur.');
+  });
+}
+function checkReminders(){
+  if(!('Notification' in window)||Notification.permission!='granted')return;
+  const today=new Date();today.setHours(0,0,0,0);
+  const candidates=[];
+  for(const e of S){
+    for(const y of [today.getFullYear(),today.getFullYear()+1]){
+      const date=new Date(y,e.m,e.d);date.setHours(0,0,0,0);
+      const days=Math.round((date-today)/864e5);
+      if(days===0||days===1)candidates.push({e,date,days});
+    }
+  }
+  navigator.serviceWorker?.ready.then(reg=>{
+    for(const {e,date,days} of candidates){
+      const key=`annif.reminded.${e.id}.${date.getFullYear()}.${days}`;
+      if(localStorage.getItem(key))continue;
+      reg.showNotification(days===0?'Anniversaire aujourd’hui 🎂':'Anniversaire demain 🎂',{
+        body:e.name+' — '+e.d+' '+MOIS[e.m],icon:'icon-192.png',tag:key
+      }).then(()=>{try{localStorage.setItem(key,'1')}catch(err){}});
+    }
+  }).catch(()=>{});
 }
 document.addEventListener('click',ev=>{
   const t=ev.target;if(t.id=='dlg'){t.close();return}
@@ -191,7 +211,7 @@ document.addEventListener('click',ev=>{
   else if(a=='save')saveForm();
   else if(a=='del'){if(confirm('Supprimer cette date ?')){S=S.filter(x=>x.id!=sel);save();render();$('#dlg').close()}}
   else if(a=='soon')soon();
-  else if(a=='notif')Notification.requestPermission().then(()=>$('#dlg').close());
+  else if(a=='notif'){if($('#dlg').open)$('#dlg').close();requestReminders()}
   else if(a=='prev'){cm--;if(cm<0){cm=11;cy--}render()}
   else if(a=='next'){cm++;if(cm>11){cm=0;cy++}render()}
   else if(a=='export'){const l=document.createElement('a');l.href=URL.createObjectURL(new Blob([JSON.stringify(S)],{type:'application/json'}));l.download='anniversaires.json';l.click()}
@@ -203,8 +223,8 @@ $('#imp').onchange=async ev=>{
 };
 $('#t-year').onclick=()=>{view='year';render()};
 $('#t-month').onclick=()=>{view='month';render()};
-render();monthlyCheck();
-if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+render();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').then(checkReminders).catch(()=>{});
 </script>
 </body>
 </html>
